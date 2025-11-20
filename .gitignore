@@ -1,0 +1,4 @@
+topics/
+.env
+.claude/
+__pycache__/
