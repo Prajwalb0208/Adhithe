@@ -1,5 +1,6 @@
 from typing import List
 
+from config import get_settings
 from prepare_tts import DEFAULT_DAY_COUNT, prepare_tts
 from topic_utils import topic_file
 from web_fetch import run_web_fetch
@@ -27,7 +28,10 @@ def prompt_plan(default_topic: str, default_days: int) -> tuple[str, int]:
 
 
 def main() -> None:
+    settings = get_settings()
     print("=== Research & Fetch Pipeline ===")
+    if settings.mock_mode:
+        print("MOCK_MODE is enabled; skipping live API calls and using cached placeholders.")
     topic, day_count = prompt_plan(DEFAULT_TOPIC, DEFAULT_DAY_COUNT)
     result_file = topic_file(topic, "result_url")
     summaries_file = topic_file(topic, "summaries")

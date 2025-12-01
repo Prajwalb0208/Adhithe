@@ -10,13 +10,15 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from openai import OpenAI
 
+from config import get_settings
 from topic_utils import topic_file
+
+SETTINGS = get_settings()
 
 DEFAULT_TOPIC = "Answer Engine Optimization"
 DEFAULT_DAY_COUNT = 20
 DEFAULT_SUMMARIES_FILE = Path(__file__).with_name("summaries.txt")
 DEFAULT_TTS_FILE = Path(__file__).with_name("tts_ready.txt")
-ENV_FILE = Path(__file__).with_name(".env")
 
 BANNED_PHRASES = {
     "advertisement",
@@ -32,8 +34,8 @@ EPISODE_TARGET_MINUTES = 30.0
 EPISODE_MIN_MINUTES = 20.0
 EPISODE_MAX_MINUTES = 45.0
 QUIZ_LENGTH = 3
-CONTENT_MULTIPLIER = 2.0  # 200% content relative to requested days
-CLAUDE_COOLDOWN_SECONDS = 20
+CONTENT_MULTIPLIER = SETTINGS.content_multiplier
+CLAUDE_COOLDOWN_SECONDS = SETTINGS.claude_cooldown_seconds
 
 
 def log_tool_usage(tool_name: str, detail: str) -> None:
@@ -60,23 +62,6 @@ def prompt_topic_and_days(
     day_count = parse_positive_int(days_input, default_days) if days_input else default_days
 
     return topic, day_count
-
-
-def load_env_vars(env_file: Path) -> None:
-    if not env_file.exists():
-        return
-
-    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-
-        if key and key not in os.environ:
-            os.environ[key] = value
 
 
 def read_summaries(file_path: Path) -> List[str]:
@@ -326,7 +311,12 @@ def call_claude_episode_script(
     duration_minutes: float,
     segments: Sequence[Dict[str, object]],
 ) -> Tuple[Dict[str, object], Dict[str, int]]:
-    load_env_vars(ENV_FILE)
+    if SETTINGS.mock_mode:
+        meta = build_fallback_meta(
+            topic, episode_number, difficulty, total_days, segments
+        )
+        usage_info = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        return meta, usage_info
 
     if "OPENAI_API_KEY" not in os.environ:
         raise RuntimeError(
@@ -575,7 +565,8 @@ def prepare_tts(
             CONTENT_MULTIPLIER,
         )
         episode_payloads.append(payload)
-        time.sleep(CLAUDE_COOLDOWN_SECONDS)
+        if not SETTINGS.mock_mode:
+            time.sleep(CLAUDE_COOLDOWN_SECONDS)
 
         openai_usage["prompt_tokens"] += usage["prompt_tokens"]
         openai_usage["completion_tokens"] += usage["completion_tokens"]
