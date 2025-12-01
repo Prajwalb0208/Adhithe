@@ -65,13 +65,16 @@ def main() -> None:
           f"(estimated {hours:.2f} hours).")
 
     try:
-        tts_count, openai_usage = prepare_tts(topic, day_count, summaries_file, tts_file)
+        tts_result = prepare_tts(topic, day_count, summaries_file, tts_file)
     except Exception as exc:  # noqa: BLE001
         print(f"TTS preparation failed: {exc}")
         return
 
-    if tts_count:
-        print(f"TTS-ready content ({tts_count} entries) stored at {tts_file}")
+    if tts_result.episode_count:
+        print(
+            f"TTS-ready content ({tts_result.episode_count} entries) stored at "
+            f"{tts_result.output_file}"
+        )
     else:
         print("No TTS entries were generated.")
 
@@ -79,9 +82,9 @@ def main() -> None:
         "Usage summary:\n"
         f"  Anthropic tokens — input: {anthropic_usage['input_tokens']} | "
         f"output: {anthropic_usage['output_tokens']}\n"
-        f"  OpenAI tokens — prompt: {openai_usage['prompt_tokens']} | "
-        f"completion: {openai_usage['completion_tokens']} | "
-        f"total: {openai_usage['total_tokens']}"
+        f"  OpenAI tokens — prompt: {tts_result.openai_usage['prompt_tokens']} | "
+        f"completion: {tts_result.openai_usage['completion_tokens']} | "
+        f"total: {tts_result.openai_usage['total_tokens']}"
     )
 
 

@@ -2,3 +2,17 @@ topics/
 .env
 .claude/
 __pycache__/
+/.venv
+*.pyc
+.DS_Store
+/.pytest_cache
+/dist/
+/build/
+/coverage/
+node_modules/
+webapp/node_modules/
+webapp/dist/
+/webapp/.env
+/webapp/.vite/
+/.idea/
+/.vscode/
