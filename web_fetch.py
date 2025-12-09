@@ -5,7 +5,6 @@ from typing import Iterable, List, Optional, Tuple
 
 import requests
 from bs4 import BeautifulSoup
-from config import get_settings
 from topic_utils import topic_file
 
 DEFAULT_URLS_FILE = Path(__file__).with_name("result_url.txt")
@@ -13,7 +12,6 @@ DEFAULT_SUMMARY_FILE = Path(__file__).with_name("summaries.txt")
 DEFAULT_TOPIC = "Answer Engine Optimization"
 MAX_SENTENCES_PER_SUMMARY = 6
 WORDS_PER_MINUTE = 160
-SETTINGS = get_settings()
 
 
 def log_tool_usage(tool_name: str, detail: str) -> None:
@@ -166,39 +164,12 @@ def estimate_audio_hours(word_count: int, wpm: int = WORDS_PER_MINUTE) -> float:
 def run_web_fetch(
     urls_file: Optional[Path] = None, summary_file: Optional[Path] = None
 ) -> Tuple[int, float, Path]:
-    settings = get_settings()
     source_file = urls_file or DEFAULT_URLS_FILE
     output_file = summary_file or DEFAULT_SUMMARY_FILE
 
     urls = load_urls(source_file)
     entries: List[str] = []
     total_estimated_hours = 0.0
-
-    if settings.mock_mode:
-        print("Mock mode enabled: skipping live fetch calls.")
-        for idx, url in enumerate(urls, start=1):
-            word_count = 800
-            estimated_hours = estimate_audio_hours(word_count)
-            total_estimated_hours += estimated_hours
-            summary = (
-                f"[MOCK SUMMARY #{idx}] Offline placeholder content for {url}. "
-                "Replace with real fetch results when APIs are available again."
-            )
-            entry = "\n".join(
-                [
-                    f"URL: {url}",
-                    f"Word count: {word_count}",
-                    f"Estimated audio hours (@{WORDS_PER_MINUTE} wpm): {estimated_hours:.2f}",
-                    "Summary:",
-                    summary,
-                    "Full content:",
-                    "This is mock content used when running without network/API access.",
-                ]
-            )
-            entries.append(entry)
-
-        save_summaries(entries, output_file)
-        return len(entries), total_estimated_hours, output_file
 
     for url in urls:
         try:

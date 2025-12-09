@@ -27,6 +27,24 @@ def prompt_plan(default_topic: str, default_days: int) -> tuple[str, int]:
     return topic, day_count
 
 
+def load_urls(file_path) -> List[str]:
+    if not file_path.exists():
+        return []
+    return [
+        line.strip()
+        for line in file_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def prompt_yes_no(message: str, default: bool = True) -> bool:
+    hint = "[Y/n]" if default else "[y/N]"
+    raw = input(f"{message} {hint}: ").strip().lower()
+    if not raw:
+        return default
+    return raw.startswith("y")
+
+
 def main() -> None:
     settings = get_settings()
     print("=== Research & Fetch Pipeline ===")
@@ -37,16 +55,30 @@ def main() -> None:
     summaries_file = topic_file(topic, "summaries")
     tts_file = topic_file(topic, "tts_ready")
 
+    # Early reuse / existence checks
+    if tts_file.exists():
+        if prompt_yes_no(f"Found existing TTS for '{topic}'. Reuse and skip regeneration?", True):
+            print(f"Reusing {tts_file}; no new web search/fetch/TTS run.")
+            return
+
+    urls: List[str] = []
+    used_cached_urls = False
+    if result_file.exists():
+        if prompt_yes_no(f"Found cached URLs for '{topic}'. Reuse and skip web search?", True):
+            urls = load_urls(result_file)
+            used_cached_urls = True
+
     print(f"Running web search for topic: {topic}")
 
     anthropic_usage = {"input_tokens": 0, "output_tokens": 0}
     openai_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
-    try:
-        urls, anthropic_usage = run_web_search(topic, result_file)
-    except Exception as exc:  # noqa: BLE001
-        print(f"Failed to collect citation URLs: {exc}")
-        return
+    if not used_cached_urls:
+        try:
+            urls, anthropic_usage = run_web_search(topic, result_file)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Failed to collect citation URLs: {exc}")
+            return
 
     if not urls:
         print("No URLs were returned; stopping before fetch.")
@@ -55,26 +87,33 @@ def main() -> None:
     print(f"Saved {len(urls)} URL(s) to {result_file}")
     print("Starting web fetch and summarization pipeline...")
 
-    try:
-        count, hours, _ = run_web_fetch(result_file, summaries_file)
-    except Exception as exc:  # noqa: BLE001
-        print(f"Web fetch failed: {exc}")
-        return
+    used_cached_summaries = False
+    if summaries_file.exists():
+        if prompt_yes_no(f"Found cached summaries for '{topic}'. Reuse and skip web fetch?", True):
+            used_cached_summaries = True
+            # We don't recompute hours from cached summaries; leave as 0 placeholder.
+            count = len(urls)
+            hours = 0.0
+            print(f"Reusing {summaries_file}")
+
+    if not used_cached_summaries:
+        try:
+            count, hours, _ = run_web_fetch(result_file, summaries_file)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Web fetch failed: {exc}")
+            return
 
     print(f"Saved {count} summaries to {summaries_file} "
           f"(estimated {hours:.2f} hours).")
 
     try:
-        tts_result = prepare_tts(topic, day_count, summaries_file, tts_file)
+        tts_count, openai_usage = prepare_tts(topic, day_count, summaries_file, tts_file)
     except Exception as exc:  # noqa: BLE001
         print(f"TTS preparation failed: {exc}")
         return
 
-    if tts_result.episode_count:
-        print(
-            f"TTS-ready content ({tts_result.episode_count} entries) stored at "
-            f"{tts_result.output_file}"
-        )
+    if tts_count:
+        print(f"TTS-ready content ({tts_count} entries) stored at {tts_file}")
     else:
         print("No TTS entries were generated.")
 
@@ -82,9 +121,9 @@ def main() -> None:
         "Usage summary:\n"
         f"  Anthropic tokens — input: {anthropic_usage['input_tokens']} | "
         f"output: {anthropic_usage['output_tokens']}\n"
-        f"  OpenAI tokens — prompt: {tts_result.openai_usage['prompt_tokens']} | "
-        f"completion: {tts_result.openai_usage['completion_tokens']} | "
-        f"total: {tts_result.openai_usage['total_tokens']}"
+        f"  OpenAI tokens — prompt: {openai_usage['prompt_tokens']} | "
+        f"completion: {openai_usage['completion_tokens']} | "
+        f"total: {openai_usage['total_tokens']}"
     )
 
 

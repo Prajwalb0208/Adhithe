@@ -5,7 +5,6 @@ import math
 import os
 import re
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -37,21 +36,6 @@ EPISODE_MAX_MINUTES = 45.0
 QUIZ_LENGTH = 3
 CONTENT_MULTIPLIER = SETTINGS.content_multiplier
 CLAUDE_COOLDOWN_SECONDS = SETTINGS.claude_cooldown_seconds
-
-
-@dataclass(frozen=True)
-class PrepareTtsResult:
-    topic: str
-    requested_days: int
-    content_days: int
-    total_minutes: float
-    episodes: List[Dict[str, object]]
-    openai_usage: Dict[str, int]
-    output_file: Path
-
-    @property
-    def episode_count(self) -> int:
-        return len(self.episodes)
 
 
 def log_tool_usage(tool_name: str, detail: str) -> None:
@@ -596,15 +580,7 @@ def prepare_tts(
         episode_payloads,
         output_file,
     )
-    return PrepareTtsResult(
-        topic=topic,
-        requested_days=requested_days,
-        content_days=content_days,
-        total_minutes=total_schedule_minutes,
-        episodes=episode_payloads,
-        openai_usage=openai_usage,
-        output_file=output_file,
-    )
+    return len(episode_payloads), openai_usage
 
 
 if __name__ == "__main__":
@@ -623,12 +599,11 @@ if __name__ == "__main__":
     summaries_path = topic_file(topic, "summaries")
     tts_path = topic_file(topic, "tts_ready")
 
-    result = prepare_tts(topic, day_count, summaries_path, tts_path)
-    if result.episode_count:
-        print(f"Prepared {result.episode_count} TTS-ready episode(s) at {tts_path}")
+    count, usage = prepare_tts(topic, day_count, summaries_path, tts_path)
+    if count:
+        print(f"Prepared {count} TTS-ready episode(s) at {tts_path}")
     print(
         "OpenAI token usage — "
-        f"prompt: {result.openai_usage['prompt_tokens']} | "
-        f"completion: {result.openai_usage['completion_tokens']} "
-        f"| total: {result.openai_usage['total_tokens']}"
+        f"prompt: {usage['prompt_tokens']} | completion: {usage['completion_tokens']} "
+        f"| total: {usage['total_tokens']}"
     )

@@ -10,33 +10,31 @@ ENV_FILE = Path(__file__).with_name(".env")
 
 
 def load_env(env_file: Path = ENV_FILE) -> None:
-    """Simple .env loader to share across CLI scripts and upcoming services."""
+    """Simple .env loader (key=value per line, ignores comments)."""
     if not env_file.exists():
         return
-
-    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
+    for raw in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
-
         key, value = line.split("=", 1)
         key = key.strip()
         value = value.strip().strip('"').strip("'")
-
         if key and key not in os.environ:
             os.environ[key] = value
 
 
 @dataclass(frozen=True)
 class Settings:
-    """Singleton configuration shared by CLI scripts and future FastAPI services."""
-
     target_unique_urls: int = 35
-    max_tool_uses: int = 25
-    max_search_attempts: int = 2
+    max_tool_uses: int = 75
+    max_search_attempts: int = 6
     claude_cooldown_seconds: int = 20
     content_multiplier: float = 2.0
     mock_mode: bool = False
+    audio_enabled: bool = True
+    reuse_cached: bool = True
+    max_languages: int = 2
     env_file: Path = ENV_FILE
 
 
@@ -83,11 +81,9 @@ def get_settings(env_file: Optional[Path] = None) -> Settings:
             "CONTENT_MULTIPLIER", Settings.content_multiplier
         ),
         mock_mode=_bool_env("MOCK_MODE", Settings.mock_mode),
+        audio_enabled=_bool_env("AUDIO_ENABLED", Settings.audio_enabled),
+        reuse_cached=_bool_env("REUSE_CACHED", Settings.reuse_cached),
+        max_languages=_int_env("MAX_LANGUAGES", Settings.max_languages),
         env_file=env_file or ENV_FILE,
     )
-
-
-
-
-
 

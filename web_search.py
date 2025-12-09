@@ -3,11 +3,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import anthropic
-from config import get_settings
-from topic_utils import topic_file, topic_slug
+from topic_utils import topic_file
 
 DEFAULT_TOPIC = "Answer Engine Optimization"
-SETTINGS = get_settings()
+TARGET_UNIQUE_URLS = 35
+MAX_TOOL_USES = 75
+MAX_SEARCH_ATTEMPTS = 6
+ENV_FILE = Path(__file__).with_name(".env")
 
 
 def extract_citation_urls(payload: Any) -> List[str]:
@@ -37,19 +39,22 @@ def save_urls(urls: List[str], file_path: Path) -> None:
     file_path.write_text("\n".join(urls), encoding="utf-8")
 
 
-def _read_existing_urls(file_path: Path) -> List[str]:
-    if not file_path.exists():
-        return []
-    return [
-        line.strip()
-        for line in file_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+def load_env_vars(env_file: Path) -> None:
+    """Load key=value pairs from a .env file into os.environ if not already set."""
+    if not env_file.exists():
+        return
 
+    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
 
-def _mock_urls(topic: str, count: int) -> List[str]:
-    slug = topic_slug(topic)
-    return [f"https://example.com/{slug}/mock-source-{idx + 1}" for idx in range(count)]
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 def _subtopic_variations(topic: str) -> List[str]:
@@ -83,20 +88,7 @@ def _build_search_prompt(topic: str, subtopic: str, existing_urls: List[str]) ->
 def run_web_search(
     topic: str, result_file: Optional[Path] = None
 ) -> Tuple[List[str], Dict[str, int]]:
-    settings = get_settings()
-
-    collected: List[str] = []
-    usage_totals = {"input_tokens": 0, "output_tokens": 0}
-    output_file = result_file or topic_file(topic, "result_url")
-
-    if settings.mock_mode:
-        print("Mock mode enabled: skipping Anthropic web search calls.")
-        existing = _read_existing_urls(output_file)
-        collected = existing or _mock_urls(
-            topic, min(settings.target_unique_urls, 10)
-        )
-        save_urls(collected, output_file)
-        return collected, usage_totals
+    load_env_vars(ENV_FILE)
 
     if "ANTHROPIC_API_KEY" not in os.environ:
         raise RuntimeError(
@@ -104,13 +96,15 @@ def run_web_search(
         )
 
     client = anthropic.Anthropic()
+    collected: List[str] = []
+    usage_totals = {"input_tokens": 0, "output_tokens": 0}
 
     subtopics = _subtopic_variations(topic)
-    for attempt in range(1, settings.max_search_attempts + 1):
+    for attempt in range(1, MAX_SEARCH_ATTEMPTS + 1):
         subtopic = subtopics[(attempt - 1) % len(subtopics)]
         prompt = _build_search_prompt(topic, subtopic, collected)
         print(
-            f"Running web search attempt {attempt}/{settings.max_search_attempts} "
+            f"Running web search attempt {attempt}/{MAX_SEARCH_ATTEMPTS} "
             f"focused on '{subtopic}'..."
         )
 
@@ -122,7 +116,7 @@ def run_web_search(
                     {
                         "type": "web_search_20250305",
                         "name": "web_search",
-                        "max_uses": settings.max_tool_uses,
+                        "max_uses": MAX_TOOL_USES,
                     }
                 ],
                 messages=[
@@ -166,16 +160,17 @@ def run_web_search(
             f"({len(collected) - before_count} new; total {len(collected)})."
         )
 
-        if len(collected) >= settings.target_unique_urls:
+        if len(collected) >= TARGET_UNIQUE_URLS:
             break
 
+    output_file = result_file or topic_file(topic, "result_url")
     save_urls(collected, output_file)
 
-    if len(collected) < settings.target_unique_urls:
+    if len(collected) < TARGET_UNIQUE_URLS:
         print(
             "Warning: "
             f"only {len(collected)} unique citation URL(s) were returned; "
-            f"target is {settings.target_unique_urls}. Continuing with available sources."
+            f"target is {TARGET_UNIQUE_URLS}. Continuing with available sources."
         )
 
     return collected, usage_totals
