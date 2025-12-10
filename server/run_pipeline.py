@@ -1,3 +1,4 @@
+import os
 from typing import List
 
 from config import get_settings
@@ -16,6 +17,13 @@ def parse_positive_int(value: str, default: int) -> int:
 
 
 def prompt_plan(default_topic: str, default_days: int) -> tuple[str, int]:
+    noninteractive = os.getenv("NONINTERACTIVE", "").strip().lower() in {"1", "true", "yes"}
+    if noninteractive:
+        topic = os.getenv("TOPIC", default_topic)
+        days_env = os.getenv("DAYS")
+        day_count = parse_positive_int(days_env, default_days) if days_env else default_days
+        return topic, day_count
+
     topic_input = input(f"Enter a topic to research [{default_topic}]: ").strip()
     topic = topic_input or default_topic
 
@@ -47,6 +55,7 @@ def prompt_yes_no(message: str, default: bool = True) -> bool:
 
 def main() -> None:
     settings = get_settings()
+    noninteractive = os.getenv("NONINTERACTIVE", "").strip().lower() in {"1", "true", "yes"}
     print("=== Research & Fetch Pipeline ===")
     if settings.mock_mode:
         print("MOCK_MODE is enabled; skipping live API calls and using cached placeholders.")
@@ -56,14 +65,14 @@ def main() -> None:
     tts_file = topic_file(topic, "tts_ready")
 
     # Early reuse / existence checks
-    if tts_file.exists():
+    if not noninteractive and tts_file.exists():
         if prompt_yes_no(f"Found existing TTS for '{topic}'. Reuse and skip regeneration?", True):
             print(f"Reusing {tts_file}; no new web search/fetch/TTS run.")
             return
 
     urls: List[str] = []
     used_cached_urls = False
-    if result_file.exists():
+    if not noninteractive and result_file.exists():
         if prompt_yes_no(f"Found cached URLs for '{topic}'. Reuse and skip web search?", True):
             urls = load_urls(result_file)
             used_cached_urls = True
@@ -88,7 +97,7 @@ def main() -> None:
     print("Starting web fetch and summarization pipeline...")
 
     used_cached_summaries = False
-    if summaries_file.exists():
+    if not noninteractive and summaries_file.exists():
         if prompt_yes_no(f"Found cached summaries for '{topic}'. Reuse and skip web fetch?", True):
             used_cached_summaries = True
             # We don't recompute hours from cached summaries; leave as 0 placeholder.

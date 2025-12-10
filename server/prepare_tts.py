@@ -36,6 +36,10 @@ EPISODE_MAX_MINUTES = 45.0
 QUIZ_LENGTH = 3
 CONTENT_MULTIPLIER = SETTINGS.content_multiplier
 CLAUDE_COOLDOWN_SECONDS = SETTINGS.claude_cooldown_seconds
+TARGET_HOURS_PER_DAY = SETTINGS.target_hours_per_day
+MIN_HOURS_PER_DAY = SETTINGS.min_hours_per_day
+MAX_HOURS_PER_DAY = SETTINGS.max_hours_per_day
+MIN_TOTAL_HOURS = SETTINGS.min_total_hours
 
 
 def log_tool_usage(tool_name: str, detail: str) -> None:
@@ -238,6 +242,114 @@ def collect_segments(entries: Sequence[str]) -> Tuple[List[Dict[str, object]], f
         )
 
     return segments, total_minutes
+
+
+def compute_target_total_minutes(day_count: int) -> float:
+    """Compute desired total minutes based on day count and configured targets."""
+    days = max(1, day_count)
+    min_hours = max(MIN_TOTAL_HOURS, days * MIN_HOURS_PER_DAY)
+    max_hours = max(min_hours, days * MAX_HOURS_PER_DAY)
+    target_hours = max(min_hours, min(days * TARGET_HOURS_PER_DAY, max_hours))
+    return target_hours * 60.0
+
+
+def expand_content_with_openai(
+    topic: str,
+    summary: str,
+    content: str,
+    extra_words: int,
+) -> Tuple[str, Dict[str, int]]:
+    if SETTINGS.mock_mode:
+        filler = (" " + (summary or content or topic)).strip()
+        expanded = (content + "\n\n" + (" " + filler) * max(1, extra_words // 8)).strip()
+        return expanded, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    if "OPENAI_API_KEY" not in os.environ:
+        raise RuntimeError(
+            "OPENAI_API_KEY is missing. Add it to .env or export it in the environment."
+        )
+
+    client = OpenAI()
+    log_tool_usage("OpenAI", f"Expanding source content by ~{extra_words} words")
+    prompt = "\n".join(
+        [
+            f"Topic: {topic}",
+            "You are expanding course source notes for TTS scripting.",
+            f"Add roughly {extra_words} new words of rich, explanatory material.",
+            "Keep single-speaker narration style, concrete examples, simple language.",
+            "Avoid bullet lists; return plain paragraphs only.",
+            "",
+            "## Existing summary",
+            summary or "(none)",
+            "",
+            "## Existing content",
+            content or "(none)",
+        ]
+    )
+
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        max_tokens=min(4096, max(800, int(extra_words * 1.2))),
+        temperature=0.5,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    expanded = (content + "\n\n" + response.choices[0].message.content.strip()).strip()
+    usage_info = {
+        "prompt_tokens": getattr(response.usage, "prompt_tokens", 0),
+        "completion_tokens": getattr(response.usage, "completion_tokens", 0),
+        "total_tokens": getattr(response.usage, "total_tokens", 0),
+    }
+    return expanded, usage_info
+
+
+def expand_segments_to_target(
+    topic: str,
+    segments: List[Dict[str, object]],
+    current_minutes: float,
+    target_minutes: float,
+) -> Tuple[List[Dict[str, object]], float, Dict[str, int]]:
+    """Expand segments with OpenAI to reach target minutes."""
+    usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    if current_minutes <= 0 or target_minutes <= current_minutes:
+        return segments, current_minutes, usage
+
+    deficit_minutes = target_minutes - current_minutes
+    deficit_words = int(deficit_minutes * WORDS_PER_MINUTE)
+    if deficit_words <= 0 or not segments:
+        return segments, current_minutes, usage
+
+    # Distribute extra words roughly evenly across segments
+    per_segment = max(150, deficit_words // len(segments))
+    new_total_minutes = current_minutes
+    expanded_segments: List[Dict[str, object]] = []
+
+    for seg in segments:
+        summary = seg.get("summary") or ""
+        content = seg.get("content") or ""
+        try:
+            expanded_content, use = expand_content_with_openai(
+                topic, summary, content, per_segment
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"Expansion failed for a segment: {exc}")
+            expanded_content = content
+            use = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+        usage["prompt_tokens"] += use["prompt_tokens"]
+        usage["completion_tokens"] += use["completion_tokens"]
+        usage["total_tokens"] += use["total_tokens"]
+
+        word_count = len(expanded_content.split())
+        minutes = estimate_minutes(word_count)
+        new_total_minutes += max(0.0, minutes - float(seg.get("minutes") or 0.0))
+
+        seg = dict(seg)
+        seg["content"] = expanded_content
+        seg["word_count"] = word_count
+        seg["minutes"] = minutes
+        expanded_segments.append(seg)
+
+    return expanded_segments, new_total_minutes, usage
 
 
 def compute_episode_targets(
@@ -496,6 +608,7 @@ def save_tts(
     requested_days: int,
     total_days: int,
     total_minutes: float,
+    target_minutes: float,
     episodes: List[Dict[str, object]],
     file_path: Path,
 ) -> None:
@@ -507,6 +620,7 @@ def save_tts(
         "content_multiplier": CONTENT_MULTIPLIER,
         "episode_count": len(episodes),
         "total_estimated_minutes": round(total_minutes, 2),
+        "target_total_minutes": round(target_minutes, 2),
         "episodes": episodes,
     }
     file_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -522,6 +636,7 @@ def prepare_tts(
     output_file = tts_file or topic_file(topic, "tts_ready")
     requested_days = day_count if day_count > 0 else DEFAULT_DAY_COUNT
     content_days = max(1, int(math.ceil(requested_days * CONTENT_MULTIPLIER)))
+    target_total_minutes = compute_target_total_minutes(requested_days)
 
     raw_entries = read_summaries(source_file)
     if not raw_entries:
@@ -529,6 +644,11 @@ def prepare_tts(
         return 0
 
     segments, total_minutes = collect_segments(raw_entries)
+    expanded_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    if total_minutes < target_total_minutes:
+        segments, total_minutes, expanded_usage = expand_segments_to_target(
+            topic, segments, total_minutes, target_total_minutes
+        )
     episodes = group_segments_into_episodes(segments, total_minutes, content_days)
 
     if not episodes:
@@ -537,7 +657,11 @@ def prepare_tts(
 
     episode_payloads: List[Dict[str, object]] = []
     total_schedule_minutes = 0.0
-    openai_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    openai_usage = {
+        "prompt_tokens": expanded_usage["prompt_tokens"],
+        "completion_tokens": expanded_usage["completion_tokens"],
+        "total_tokens": expanded_usage["total_tokens"],
+    }
 
     for idx, (episode_segments, duration) in enumerate(episodes, start=1):
         total_schedule_minutes += duration
@@ -577,6 +701,7 @@ def prepare_tts(
         requested_days,
         content_days,
         total_schedule_minutes,
+        target_total_minutes,
         episode_payloads,
         output_file,
     )

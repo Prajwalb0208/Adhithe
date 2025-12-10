@@ -6,9 +6,9 @@ import anthropic
 from topic_utils import topic_file
 
 DEFAULT_TOPIC = "Answer Engine Optimization"
-TARGET_UNIQUE_URLS = 35
-MAX_TOOL_USES = 75
-MAX_SEARCH_ATTEMPTS = 6
+TARGET_UNIQUE_URLS = 5
+MAX_TOOL_USES = 2
+MAX_SEARCH_ATTEMPTS = 1
 ENV_FILE = Path(__file__).with_name(".env")
 
 
@@ -160,7 +160,9 @@ def run_web_search(
             f"({len(collected) - before_count} new; total {len(collected)})."
         )
 
-        if len(collected) >= TARGET_UNIQUE_URLS:
+        # Stop early if we have any URLs; retry only when we found zero.
+        if collected:
+            print("URLs found; stopping further search attempts.")
             break
 
     output_file = result_file or topic_file(topic, "result_url")

@@ -31,10 +31,19 @@ class Settings:
     max_search_attempts: int = 6
     claude_cooldown_seconds: int = 20
     content_multiplier: float = 2.0
+    # Duration targets
+    target_hours_per_day: float = 2.0       # Aim for ~2h per requested day
+    min_hours_per_day: float = 1.0          # Lower band per day
+    max_hours_per_day: float = 2.5          # Upper band per day
+    min_total_hours: float = 2.0            # Floor for very short plans
     mock_mode: bool = False
     audio_enabled: bool = True
     reuse_cached: bool = True
     max_languages: int = 2
+    mongo_url: str = os.getenv(
+        "MONGO_URL",
+        "mongodb+srv://adhithe677_db_user:rDr4DCAuBbgkIXwU@adhithev1.ba479xj.mongodb.net/?appName=Adhithev1",
+    )
     env_file: Path = ENV_FILE
 
 
@@ -80,10 +89,23 @@ def get_settings(env_file: Optional[Path] = None) -> Settings:
         content_multiplier=_float_env(
             "CONTENT_MULTIPLIER", Settings.content_multiplier
         ),
+        target_hours_per_day=_float_env(
+            "TARGET_HOURS_PER_DAY", Settings.target_hours_per_day
+        ),
+        min_hours_per_day=_float_env(
+            "MIN_HOURS_PER_DAY", Settings.min_hours_per_day
+        ),
+        max_hours_per_day=_float_env(
+            "MAX_HOURS_PER_DAY", Settings.max_hours_per_day
+        ),
+        min_total_hours=_float_env(
+            "MIN_TOTAL_HOURS", Settings.min_total_hours
+        ),
         mock_mode=_bool_env("MOCK_MODE", Settings.mock_mode),
         audio_enabled=_bool_env("AUDIO_ENABLED", Settings.audio_enabled),
         reuse_cached=_bool_env("REUSE_CACHED", Settings.reuse_cached),
         max_languages=_int_env("MAX_LANGUAGES", Settings.max_languages),
+        mongo_url=os.getenv("MONGO_URL", Settings.mongo_url),
         env_file=env_file or ENV_FILE,
     )
 
