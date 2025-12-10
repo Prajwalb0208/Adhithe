@@ -12,6 +12,7 @@ from openai import OpenAI
 
 from config import get_settings
 from topic_utils import topic_file
+from media_recommender import generate_media_recommendations
 
 SETTINGS = get_settings()
 
@@ -556,6 +557,7 @@ def build_episode_payload(
     meta: Dict[str, object],
     segments: Sequence[Dict[str, object]],
     content_multiplier: float,
+    recommended_media: Sequence[Dict[str, object]] | None = None,
 ) -> Dict[str, object]:
     sources_payload: List[Dict[str, object]] = []
     for idx, segment in enumerate(segments, start=1):
@@ -589,6 +591,7 @@ def build_episode_payload(
         "script": meta.get("script", "").strip(),
         "quiz": meta.get("quiz") or [],
         "sources": sources_payload,
+        "recommended_media": list(recommended_media or []),
     }
 
 
@@ -666,6 +669,9 @@ def prepare_tts(
     for idx, (episode_segments, duration) in enumerate(episodes, start=1):
         total_schedule_minutes += duration
         difficulty = difficulty_label(idx, content_days)
+        recommended_media = []
+        rec_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
         try:
             meta, usage = call_claude_episode_script(
                 topic, idx, difficulty, content_days, duration, episode_segments
@@ -677,6 +683,15 @@ def prepare_tts(
             )
             usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
+        try:
+            recommended_media, rec_usage = generate_media_recommendations(
+                topic, idx, duration, episode_segments
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"Episode {idx} media recommendation failed: {exc}")
+            recommended_media = []
+            rec_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
         payload = build_episode_payload(
             topic,
             idx,
@@ -687,6 +702,7 @@ def prepare_tts(
             meta,
             episode_segments,
             CONTENT_MULTIPLIER,
+            recommended_media,
         )
         episode_payloads.append(payload)
         if not SETTINGS.mock_mode:
@@ -695,6 +711,9 @@ def prepare_tts(
         openai_usage["prompt_tokens"] += usage["prompt_tokens"]
         openai_usage["completion_tokens"] += usage["completion_tokens"]
         openai_usage["total_tokens"] += usage["total_tokens"]
+        openai_usage["prompt_tokens"] += rec_usage["prompt_tokens"]
+        openai_usage["completion_tokens"] += rec_usage["completion_tokens"]
+        openai_usage["total_tokens"] += rec_usage["total_tokens"]
 
     save_tts(
         topic,

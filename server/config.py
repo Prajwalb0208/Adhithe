@@ -40,10 +40,7 @@ class Settings:
     audio_enabled: bool = True
     reuse_cached: bool = True
     max_languages: int = 2
-    mongo_url: str = os.getenv(
-        "MONGO_URL",
-        "mongodb+srv://adhithe677_db_user:rDr4DCAuBbgkIXwU@adhithev1.ba479xj.mongodb.net/?appName=Adhithev1",
-    )
+    mongo_url: str = os.getenv("MONGO_URL", "")
     env_file: Path = ENV_FILE
 
 
